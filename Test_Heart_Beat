@@ -1,0 +1,146 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import time
+import time, random
+import math
+import serial
+from scipy import signal
+from collections import deque
+from matplotlib.widgets import TextBox
+
+#Display loading 
+class PlotData:
+    def __init__(self, max_entries=30):
+        self.axis_x = deque(maxlen=max_entries)
+        self.axis_y = deque(maxlen=max_entries)
+    def add(self, x, y):
+        self.axis_x.append(x)
+        self.axis_y.append(y)
+
+
+#initial
+fig1, (pic1,pic2,pic3,pic4,pic5) = plt.subplots(5,1)                 #生成列為3 行為1的圖框
+fig2, (pic6,pic7) = plt.subplots(2,1)   
+line1, = pic1.plot(np.random.randn(100))                             #生成有100個值的標準正態分佈(平均值0 標準差1)陣列
+line2, = pic2.plot(np.random.randn(100))
+line3, = pic3.plot(np.random.randn(100))
+line4, = pic4.plot(np.random.randn(100))
+line5, = pic5.plot(np.random.randn(100))
+
+plt.show(block = False)                                              #若沒有block=false 在視窗開啟時程式不會繼續執行
+plt.setp(line2,color = 'r')
+
+PData1= PlotData(500)                                                #把500傳到PlotData內當作deque(堆疊)的長度
+PData2= PlotData(500)
+PData3= PlotData(500)
+ 
+pic1.set_xlabel('second')                                            ##設定x單位 
+pic1.set_ylim(-6, 8)                                                 #設定y刻度      #濾除直流後的波形
+pic2.set_xlabel('second')
+pic2.set_ylim(0, 1000)
+pic3.set_xlabel('frequency')
+pic3.set_ylim(0, 8)
+pic4.set_xlabel('frequency')
+pic4.set_ylim(0, 8)
+pic5.set_xlabel('second')
+pic5.set_ylim(0, 150) 
+
+pic6.set_xlabel('Real')
+pic6.set_xlim(-2,2)
+pic6.set_ylabel('Imag')
+pic6.set_ylim(-2, 2)
+
+#z-domain
+angle = np.linspace(-np.pi, np.pi, 50)
+cirx = np.sin(angle)
+ciry = np.cos(angle)
+cof=[1/5, 1/5, 1/5, 1/5, 1/5]
+z=np.roots(cof)
+pic6.plot(cirx, ciry,'k-')
+pic6.plot(np.real(z), np.imag(z), 'o', markersize=12)
+pic6.plot(0, 0, 'x', markersize=12)
+pic6.grid()
+#
+
+
+
+# plot parameters
+print ('plotting data...')
+# open serial port
+strPort='com3'
+ser = serial.Serial(strPort, 115200)
+ser.flush()                                                          #等待所有數據寫出
+
+start = time.time()
+tmp=deque(maxlen=20)                                                 #設定堆疊的空間大小 可以容納20個值
+HB =deque(maxlen=200)
+data1 = deque(maxlen=20)
+initial_text = 0                                                     #初始心率值
+text_box = TextBox(pic7, 'HB:', initial='')                          #紀錄心率值
+
+#############################
+while True:                                                         #永遠執行
+    for ii in range(10):                                             #每10個值畫一次圖 如果電腦慢就10改大一點 PlotData(100) 2=>2.5 10=>1
+        try:                                                        #偵錯
+            data = float(ser.readline())            
+            tmp.append(data)
+            data1.append(data-np.mean(tmp))                         #把原本的資料去直流
+            if data1[-3] < data1[-2] and data1[-2] > data1[-1] and data1[-2] > 1: 
+                #與前一位和後一位比大小確認峰值並忽略雜訊，若不是峰值便設其值為0
+                HB.append(data1[-2])
+                for i in range(len(HB)-2,-1,-1):                    #把資料檔案往前掃確認前面有無峰值
+                    if HB[i] > 0:                                    
+                        if 6000/(len(HB)-i-1) < 120:                #把峰值有可能是平的狀況濾掉
+                            PData3.add(time.time() - start, 6000/(len(HB)-i-1))     
+                            print(6000/(len(HB)-i-1))
+                            initial_text = 6000/(len(HB)-i-1)       
+                            text_box.set_val(initial_text)           #在textbox印出心率
+                            #plt.show()
+                        else:
+                            PData3.add(time.time() - start, 0) 
+                        break
+            else:
+                PData3.add(time.time() - start, 0)
+                HB.append(0)
+            PData1.add(time.time() - start, data-np.mean(tmp))      #去掉直流
+            PData2.add(time.time() - start, data)                   #未除去直流
+        except:
+            pass
+    mean=()
+    mean=np.mean(tmp)
+    #print(mean)
+#
+    if len(PData1.axis_y)==500:
+        pic1.set_xlim(PData1.axis_x[0], PData1.axis_x[0]+5)             #時間軸長短設定
+        pic2.set_xlim(PData1.axis_x[0], PData1.axis_x[0]+5)
+        pic3.set_xlim(0,100)
+        pic4.set_xlim(0,100)
+        pic5.set_xlim(PData1.axis_x[0], PData1.axis_x[0]+5)
+
+        
+        #頻譜
+        sampling_rate = 100
+        fft_size = 100        
+        yf = np.fft.fft(PData1.axis_y)/fft_size
+        freqs = np.linspace(0, 100, 500)        
+        #
+
+        #FIR
+        y13 = signal.lfilter([1/5, 1/5, 1/5, 1/5, 1/5], 1, PData1.axis_y)
+        y1  = np.fft.fft(y13)/fft_size
+        #
+        line1.set_xdata(PData1.axis_x)
+        line1.set_ydata(PData1.axis_y)    
+        line2.set_xdata(PData2.axis_x)    
+        line2.set_ydata(PData2.axis_y)  
+        line3.set_xdata(freqs)
+        line3.set_ydata(abs(yf))        
+        line4.set_xdata(freqs)
+        line4.set_ydata(abs(y1))
+        line5.set_xdata(PData3.axis_x)
+        line5.set_ydata(PData3.axis_y)
+        
+    fig1.canvas.draw()
+    fig1.canvas.flush_events()
+    fig2.canvas.draw()
+    fig2.canvas.flush_events()
